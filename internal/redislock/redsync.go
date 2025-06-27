@@ -62,20 +62,20 @@ func NewRedSyncLock(redisClient *redis.Client, key string, expiration time.Durat
 }
 
 // Lock 上锁
-func (l *RedSyncLock) Lock(ctx context.Context) (bool, error) {
+func (l *RedSyncLock) Lock(ctx context.Context) error {
 	if err := l.mx.LockContext(ctx); err != nil {
-		return false, err
+		return err
 	}
-	return true, nil
+	return nil
 }
 
 // UnLock 解锁
-func (l *RedSyncLock) UnLock(ctx context.Context) (bool, error) {
+func (l *RedSyncLock) UnLock(ctx context.Context) error {
 	// Release the lock so other processes or threads can obtain a lock.
 	if ok, err := l.mx.UnlockContext(ctx); !ok || err != nil {
-		return false, err
+		return err
 	}
-	return true, nil
+	return nil
 }
 
 // TryLock 尝试加锁
@@ -88,11 +88,13 @@ func (l *RedSyncLock) TryLock(ctx context.Context) (bool, error) {
 }
 
 func (l *RedSyncLock) LockFunc(ctx context.Context, f func()) error {
-	_, err := l.Lock(ctx)
+	err := l.Lock(ctx)
 	if err != nil {
 		return err
 	}
-	defer l.UnLock(ctx)
+	defer func() {
+		_ = l.UnLock(ctx)
+	}()
 	f()
 	return nil
 }
@@ -102,7 +104,9 @@ func (l *RedSyncLock) TryLockFunc(ctx context.Context, f func()) (bool, error) {
 		return false, err
 	}
 	if ok {
-		defer l.UnLock(ctx)
+		defer func() {
+			_ = l.UnLock(ctx)
+		}()
 		f()
 		return true, nil
 	}

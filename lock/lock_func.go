@@ -54,7 +54,12 @@ func lockFunc(locker Locker, key string, f func(), useTry bool, expiration time.
 		}
 
 		if ok {
-			defer nl.UnLock(ctx)
+			defer func(nl Locker, ctx context.Context) {
+				err = nl.UnLock(ctx)
+				if err != nil {
+					fmt.Println("unlock error:", err)
+				}
+			}(nl, ctx)
 			f()
 			return true, nil
 		}
@@ -65,14 +70,16 @@ func lockFunc(locker Locker, key string, f func(), useTry bool, expiration time.
 		return true, nl.LockFunc(ctx, f)
 	}
 
-	ok, err := nl.Lock(ctx)
+	err = nl.Lock(ctx)
 	if err != nil {
 		return lockFunc(gmlock.NewMemLock(key), key, f, useTry, expiration)
 	}
-	if !ok { //返回false表示已经被别的线程锁住了，不能执行了
-		return false, nil
-	}
-	defer nl.UnLock(ctx)
+	defer func(nl Locker, ctx context.Context) {
+		err = nl.UnLock(ctx)
+		if err != nil {
+			fmt.Println("unlock error:", err)
+		}
+	}(nl, ctx)
 	f()
 	return true, nil
 }

@@ -62,22 +62,29 @@ func NewRedisLock(redisClient *redis.Client, key string, expiration time.Duratio
 }
 
 // Lock 上锁
-func (l *RedisLock) Lock(ctx context.Context) (bool, error) {
-	return l.lockContext(ctx, l.tries)
+func (l *RedisLock) Lock(ctx context.Context) error {
+	ok, err := l.lockContext(ctx, l.tries)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no lock for key: %s", l.key)
+	}
+	return nil
 }
 
 // UnLock 解锁
-func (l *RedisLock) UnLock(ctx context.Context) (bool, error) {
+func (l *RedisLock) UnLock(ctx context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if !l.isLocked {
-		return true, nil
+		return nil
 	}
 
 	l.count--
 	if l.count > 0 {
-		return true, nil
+		return nil
 	}
 
 	if ctx == nil {
@@ -96,7 +103,7 @@ func (l *RedisLock) UnLock(ctx context.Context) (bool, error) {
     `
 	result, err := l.redisClient.Eval(ctx, unlockScript, []string{l.key}, l.value).Result()
 	if err != nil {
-		return false, err
+		return err
 	}
 	retSuccess := result.(int64) == 1
 	if retSuccess {
@@ -105,9 +112,10 @@ func (l *RedisLock) UnLock(ctx context.Context) (bool, error) {
 		l.isLocked = false
 		l.count = 0
 		l.renewCancel()
+		return nil
 	}
 
-	return retSuccess, nil
+	return fmt.Errorf("no unlock for key: %s", l.key)
 }
 
 // TryLock 尝试加锁
@@ -116,11 +124,13 @@ func (l *RedisLock) TryLock(ctx context.Context) (bool, error) {
 }
 
 func (l *RedisLock) LockFunc(ctx context.Context, f func()) error {
-	_, err := l.Lock(ctx)
+	err := l.Lock(ctx)
 	if err != nil {
 		return err
 	}
-	defer l.UnLock(ctx)
+	defer func() {
+		_ = l.UnLock(ctx)
+	}()
 	f()
 	return nil
 }
@@ -130,7 +140,9 @@ func (l *RedisLock) TryLockFunc(ctx context.Context, f func()) (bool, error) {
 		return false, err
 	}
 	if ok {
-		defer l.UnLock(ctx)
+		defer func() {
+			_ = l.UnLock(ctx)
+		}()
 		f()
 		return true, nil
 	}

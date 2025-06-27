@@ -63,11 +63,16 @@ func TestDeadLock2(t *testing.T) {
 		time.Sleep(1 * time.Second)
 		fmt.Println("内1 222222222")
 
-		mm, err := lock.Lock(key1, func() {
-			fmt.Println("内内11 11111111")
-			fmt.Println("内内11 222222222")
-		})
-		fmt.Println("内内11", mm, err)
+		go func() {
+			mm, err := lock.Lock(key1, func() {
+				fmt.Println("内内11 11111111")
+				fmt.Println("内内11 222222222")
+			})
+			fmt.Println("内内11", mm, err)
+		}()
+
+		time.Sleep(3 * time.Second)
+
 	})
 	fmt.Println("内1", mm, err)
 

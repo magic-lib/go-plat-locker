@@ -33,16 +33,16 @@ func NewMemLock(key string) *MemLock {
 }
 
 // Lock 上锁
-func (m *MemLock) Lock(_ context.Context) (bool, error) {
+func (m *MemLock) Lock(_ context.Context) error {
 	Lock(m.key)
-	return true, nil
+	return nil
 }
 
 // UnLock 解锁
-func (m *MemLock) UnLock(_ context.Context) (bool, error) {
+func (m *MemLock) UnLock(_ context.Context) error {
 	Unlock(m.key)
 	Remove(m.key)
-	return true, nil
+	return nil
 }
 
 // TryLock 尝试加锁

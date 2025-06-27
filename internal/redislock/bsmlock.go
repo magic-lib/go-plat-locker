@@ -49,23 +49,23 @@ func NewBsmRedisLock(redisClient *redis.Client, key string, expiration time.Dura
 }
 
 // Lock 上锁
-func (l *BsmRedisLock) Lock(ctx context.Context) (bool, error) {
+func (l *BsmRedisLock) Lock(ctx context.Context) error {
 	lock, err := l.cli.Obtain(ctx, l.key, l.expiration, nil)
 	if errors.Is(err, redislock.ErrNotObtained) {
 		fmt.Println("Could not obtain lock!")
 	} else if err != nil {
-		return false, err
+		return err
 	}
 	l.mx = lock
-	return true, nil
+	return nil
 }
 
 // UnLock 解锁
-func (l *BsmRedisLock) UnLock(ctx context.Context) (bool, error) {
+func (l *BsmRedisLock) UnLock(ctx context.Context) error {
 	if err := l.mx.Release(ctx); err != nil {
-		return false, err
+		return err
 	}
-	return true, nil
+	return nil
 }
 
 // TryLock 尝试加锁
@@ -76,17 +76,27 @@ func (l *BsmRedisLock) TryLock(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if t == 0 {
-		return l.Lock(ctx)
+		err = l.Lock(ctx)
+		if err == nil {
+
+		}
+		err = l.Lock(ctx)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	return false, nil
 }
 
 func (l *BsmRedisLock) LockFunc(ctx context.Context, f func()) error {
-	_, err := l.Lock(ctx)
+	err := l.Lock(ctx)
 	if err != nil {
 		return err
 	}
-	defer l.UnLock(ctx)
+	defer func() {
+		_ = l.UnLock(ctx)
+	}()
 	f()
 	return nil
 }
@@ -96,7 +106,9 @@ func (l *BsmRedisLock) TryLockFunc(ctx context.Context, f func()) (bool, error) 
 		return false, err
 	}
 	if ok {
-		defer l.UnLock(ctx)
+		defer func() {
+			_ = l.UnLock(ctx)
+		}()
 		f()
 		return true, nil
 	}

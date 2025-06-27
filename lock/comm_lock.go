@@ -2,8 +2,10 @@ package lock
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-redis/redis/v8"
 	"github.com/magic-lib/go-plat-locker/internal/gmlock"
+	"github.com/magic-lib/go-plat-locker/internal/mysqllock"
 	"github.com/magic-lib/go-plat-locker/internal/redislock"
 	"sync"
 	"time"
@@ -17,22 +19,24 @@ var (
 	_                  Locker = (*redislock.BsmRedisLock)(nil)
 	_                  Locker = (*redislock.RedSyncLock)(nil)
 	_                  Locker = (*redislock.RedisLock)(nil)
+	_                  Locker = (*mysqllock.MySqlLock)(nil)
 	_                  Locker = (*commLocker)(nil)
 )
 
 // SetLockerDefRedisClient 新建redis锁
 func SetLockerDefRedisClient(redisClient *redis.Client) {
-	if redisClient != nil {
-		go func() {
-			var err error
-			if redisClient, err = redislock.RedisClientV8(redisClient); err != nil {
-				return
-			}
-			defaultClientMux.Lock()
-			defer defaultClientMux.Unlock()
-			defaultRedisClient = redisClient
-		}()
+	if redisClient == nil {
+		return
 	}
+	go func() {
+		var err error
+		if redisClient, err = redislock.RedisClientV8(redisClient); err != nil {
+			return
+		}
+		defaultClientMux.Lock()
+		defer defaultClientMux.Unlock()
+		defaultRedisClient = redisClient
+	}()
 }
 
 type commLocker struct {
@@ -49,20 +53,25 @@ func (c *commLocker) TryLock(ctx context.Context) (bool, error) {
 	return c.locker.TryLock(ctx)
 }
 
-func (c *commLocker) Lock(ctx context.Context) (bool, error) {
+func (c *commLocker) Lock(ctx context.Context) error {
 	return c.locker.Lock(ctx)
 }
 
-func (c *commLocker) UnLock(ctx context.Context) (bool, error) {
+func (c *commLocker) UnLock(ctx context.Context) error {
 	return c.locker.UnLock(ctx)
 }
 
 func (c *commLocker) LockFunc(ctx context.Context, f func()) error {
-	_, err := c.Lock(ctx)
+	err := c.Lock(ctx)
 	if err != nil {
 		return err
 	}
-	defer c.UnLock(ctx)
+	defer func(c *commLocker, ctx context.Context) {
+		err = c.UnLock(ctx)
+		if err != nil {
+			fmt.Println("lockFunc error:", err)
+		}
+	}(c, ctx)
 	f()
 	return nil
 }
@@ -72,7 +81,12 @@ func (c *commLocker) TryLockFunc(ctx context.Context, f func()) (bool, error) {
 		return false, err
 	}
 	if ok {
-		defer c.UnLock(ctx)
+		defer func(c *commLocker, ctx context.Context) {
+			err = c.UnLock(ctx)
+			if err != nil {
+				fmt.Println("tryLockFunc error:", err)
+			}
+		}(c, ctx)
 		f()
 		return true, nil
 	}
