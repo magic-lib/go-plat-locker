@@ -41,6 +41,7 @@ func SetLockerDefRedisClient(redisClient *redis.Client) {
 
 type commLocker struct {
 	redisClient *redis.Client
+	mysqlClient *mysqllock.Config
 	locker      Locker
 	expiration  time.Duration
 }
@@ -106,6 +107,11 @@ func WithRedisClient(redisClient *redis.Client) Option {
 		c.redisClient = redisClient
 	}
 }
+func WithMysqlClient(mysqlConfig *mysqllock.Config) Option {
+	return func(c *commLocker) {
+		c.mysqlClient = mysqlConfig
+	}
+}
 func WithLocker(locker Locker) Option {
 	return func(c *commLocker) {
 		c.locker = locker
@@ -128,6 +134,12 @@ func NewLocker(key string, options ...Option) Locker {
 		redisClient = locker.redisClient
 		if defaultRedisClient == nil {
 			SetLockerDefRedisClient(locker.redisClient)
+		}
+	} else if locker.mysqlClient != nil {
+		var err error
+		locker.locker, err = mysqllock.NewMySqlLock(locker.mysqlClient, key, locker.expiration)
+		if err == nil {
+			return locker
 		}
 	} else {
 		if defaultRedisClient != nil {
