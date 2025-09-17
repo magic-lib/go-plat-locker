@@ -161,8 +161,8 @@ github.com/magic-lib/go-plat-cache v1.20250722.3-0.20250910070500-8f73701ad481 h
 github.com/magic-lib/go-plat-cache v1.20250722.3-0.20250910070500-8f73701ad481/go.mod h1:sud/NCUqYV9Um1/QMW9gt3oAc87tEs8pC/cWC5uRJbg=
 github.com/magic-lib/go-plat-startupcfg v1.20250405.1 h1:33TQHBEFdJywIEUdYFtEsh86gO3FzpE7fYS/U8miFtU=
 github.com/magic-lib/go-plat-startupcfg v1.20250405.1/go.mod h1:BJL6989sl0t6StzLp8H6wOIS/Dvo4JgGJnL3yMV4ar4=
-github.com/magic-lib/go-plat-utils v1.20250721.3-0.20250915021659-921e5640abdf h1:nxq4yBW751/ymuVCO8voVC74X13G0lHhVx8NbY5XipU=
-github.com/magic-lib/go-plat-utils v1.20250721.3-0.20250915021659-921e5640abdf/go.mod h1:EnmJK+XmRDkuxUDSrtmF+pBO4L8Ir/Pei/drcd6Z1Po=
+github.com/magic-lib/go-plat-utils v1.20250721.3-0.20250916094605-cffc6f904445 h1:rIhQUtdrJ2uLbk5DkA1O+72LpSPmgN6TxA/0x9UY/T4=
+github.com/magic-lib/go-plat-utils v1.20250721.3-0.20250916094605-cffc6f904445/go.mod h1:EnmJK+XmRDkuxUDSrtmF+pBO4L8Ir/Pei/drcd6Z1Po=
 github.com/marspere/goencrypt v1.0.7 h1:Rlvsc9b7Yeaeda+gsGeCjREVZ/KL7szelRq4+haK5mw=
 github.com/marspere/goencrypt v1.0.7/go.mod h1:S5g6Wsd5jcOO01sp9QxNMYCldx9kecoDkK7BWaHA0vo=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=

@@ -48,6 +48,41 @@ func (n *Node) Compare(to *Node) bool {
 	return false
 }
 
+// CheckIsLeader 根据用户配置判断当前是否是leader
+func (n *Node) CheckIsLeader(currentNode *Node) bool {
+	if currentNode == nil {
+		return false
+	}
+
+	var compareNode = func(currentNode *Node) bool {
+		hasOption := false
+		if n.Id != "" {
+			hasOption = true
+			if n.Id != currentNode.Id {
+				return false
+			}
+		}
+		if n.IP != "" {
+			hasOption = true
+			if n.IP != currentNode.IP {
+				return false
+			}
+		}
+		if n.Hostname != "" {
+			hasOption = true
+			if n.Hostname != currentNode.Hostname {
+				return false
+			}
+		}
+		if hasOption {
+			return true
+		}
+		return false //表示全部为空，则表示传的空对象
+	}
+
+	return compareNode(currentNode)
+}
+
 type LeaderElector interface {
 	Register() error                                  // 注册节点
 	LeaderRun(f func(node *Node) error) (bool, error) // leader执行任务

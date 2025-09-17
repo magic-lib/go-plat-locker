@@ -8,7 +8,7 @@ require (
 	github.com/go-redsync/redsync/v4 v4.13.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/magic-lib/go-plat-cache v1.20250722.3-0.20250910070500-8f73701ad481
-	github.com/magic-lib/go-plat-utils v1.20250721.3-0.20250915021659-921e5640abdf
+	github.com/magic-lib/go-plat-utils v1.20250721.3-0.20250916094605-cffc6f904445
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/redis/go-redis/v9 v9.7.3

@@ -33,18 +33,20 @@ type MysqlConfig struct {
 	ElectionKey      string // 选举List的所有Key
 	HeartbeatTimeout int    // 心跳超时时间，超时，表示这个节点不能用了(秒)
 	ElectionInterval int    // 选举检查间隔(秒)
+	DefaultLeader    *Node  // 设置默认主节点，如果存在就默认为主节点
 }
 
 // MysqlElection 选举管理器
 type MysqlElection struct {
-	mysqlCache  cache.CommCache[[]*Node]
-	lockFunc    func(ns, key string) lock.Locker
-	node        *Node
-	mysqlConfig *MysqlConfig
-	mu          sync.Mutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	running     bool
+	mysqlCache    cache.CommCache[[]*Node]
+	lockFunc      func(ns, key string) lock.Locker
+	node          *Node
+	defaultLeader *Node
+	mysqlConfig   *MysqlConfig
+	mu            sync.Mutex
+	ctx           context.Context
+	cancel        context.CancelFunc
+	running       bool
 }
 
 // NewMysqlElection 创建选举实例
@@ -92,18 +94,19 @@ func NewMysqlElection(ctx context.Context, cfg *MysqlConfig) (*MysqlElection, er
 	}
 
 	return &MysqlElection{
-		mysqlConfig: cfg,
-		mysqlCache:  mysqlCache,
-		lockFunc:    cfg.Locker,
-		node:        node,
-		ctx:         childCtx,
-		cancel:      cancel,
-		running:     true,
+		mysqlConfig:   cfg,
+		mysqlCache:    mysqlCache,
+		lockFunc:      cfg.Locker,
+		node:          node,
+		defaultLeader: cfg.DefaultLeader,
+		ctx:           childCtx,
+		cancel:        cancel,
+		running:       true,
 	}, nil
 }
 
 // Start 启动节点：注册节点信息、参与选举、定时心跳
-func (nm *MysqlElection) Start(initialLeaderID string, f func(node *Node) error) error {
+func (nm *MysqlElection) Start(f func(node *Node) error) error {
 	// 1. 注册节点信息
 	if err := nm.Register(); err != nil {
 		return err
@@ -114,7 +117,7 @@ func (nm *MysqlElection) Start(initialLeaderID string, f func(node *Node) error)
 
 	// 3. 参与主节点选举（如果是初始主节点则优先竞选）
 	go func() {
-		nm.startElection(initialLeaderID, f)
+		nm.startElection(f)
 	}()
 
 	log.Printf("节点 %s 启动成功 (IP: %s)", nm.node.Id, nm.node.IP)
@@ -249,7 +252,7 @@ func (nm *MysqlElection) heartbeat() {
 }
 
 // StartElection 开始选举过程
-func (nm *MysqlElection) startElection(initialLeaderID string, fun func(node *Node) error) {
+func (nm *MysqlElection) startElection(fun func(node *Node) error) {
 	ticker := time.NewTicker(time.Duration(nm.mysqlConfig.ElectionInterval) * time.Second)
 	defer ticker.Stop()
 
@@ -265,7 +268,7 @@ func (nm *MysqlElection) startElection(initialLeaderID string, fun func(node *No
 				log.Printf("startElection ticker.C: %s, %s", conv.String(nm.node), conv.String(isStop))
 				_ = nm.Stop()
 			} else {
-				err = nm.electOnce(initialLeaderID, fun)
+				err = nm.electOnce(fun)
 				if err != nil {
 					log.Printf("节点选举失败: %s (node: %s)", err.Error(), conv.String(nm.node))
 				}
@@ -284,16 +287,13 @@ func (nm *MysqlElection) removeExpireNode(nodeList []*Node) []*Node {
 	})
 	return newNodeList
 }
-func (nm *MysqlElection) findLeader(initialLeaderID string, nodeList []*Node) (*Node, int) {
+func (nm *MysqlElection) findLeader(nodeList []*Node) (*Node, int) {
 	if len(nodeList) == 0 {
 		return nil, 0
 	}
-	if initialLeaderID != "" {
+	if nm.defaultLeader != nil {
 		oneNode, index, ok := lo.FindIndexOf(nodeList, func(node *Node) bool {
-			if node.Id == initialLeaderID {
-				return true
-			}
-			return false
+			return nm.defaultLeader.CheckIsLeader(node)
 		})
 		if ok {
 			return oneNode, index
@@ -311,7 +311,7 @@ func (nm *MysqlElection) findLeader(initialLeaderID string, nodeList []*Node) (*
 }
 
 // electOnce 执行一次选举
-func (nm *MysqlElection) electOnce(initialLeaderID string, fun func(node *Node) error) error {
+func (nm *MysqlElection) electOnce(fun func(node *Node) error) error {
 	return nm.setToList(func(nodeList []*Node) []*Node {
 		//echoId := make([]string, 0)
 		//lo.ForEach(nodeList, func(item *Node, index int) {
@@ -320,7 +320,7 @@ func (nm *MysqlElection) electOnce(initialLeaderID string, fun func(node *Node) 
 		//fmt.Println("allList:", echoId)
 
 		nodeList = nm.removeExpireNode(nodeList)
-		leaderNode, index := nm.findLeader(initialLeaderID, nodeList)
+		leaderNode, index := nm.findLeader(nodeList)
 
 		if leaderNode != nil {
 			log.Printf("当前Leader节点: %s (node: %s)", leaderNode.Id, conv.String(leaderNode))
