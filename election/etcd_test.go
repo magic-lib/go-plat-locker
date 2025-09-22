@@ -60,10 +60,10 @@ func TestMysql(t *testing.T) {
 
 	go func() {
 		ctx := context.Background()
-		node1, err := election.NewMysqlElection(ctx, &election.MysqlConfig{
-			ElectionInterval: 5,
+		node1, err := election.NewMysqlElection(ctx, &election.MysqlElectionConfig{
+			ElectionInterval: 0,
 			HeartbeatTimeout: 0,
-			Node: &election.Node{
+			CurrentNode: &election.Node{
 				Id: "node1",
 			},
 			CacheConfig: cacheCfg,
@@ -73,7 +73,7 @@ func TestMysql(t *testing.T) {
 			panic(err)
 		}
 
-		err = node1.Start("", func(node *election.Node) error {
+		err = node1.Start(func(node *election.Node) error {
 			fmt.Println("执行主节点对象：", conv.String(node))
 			_ = node1.Stop()
 			return nil
@@ -87,10 +87,10 @@ func TestMysql(t *testing.T) {
 	}()
 	go func() {
 		ctx := context.Background()
-		node1, err := election.NewMysqlElection(ctx, &election.MysqlConfig{
-			ElectionInterval: 5,
+		node1, err := election.NewMysqlElection(ctx, &election.MysqlElectionConfig{
+			ElectionInterval: 0,
 			HeartbeatTimeout: 0,
-			Node: &election.Node{
+			CurrentNode: &election.Node{
 				Id: "node2",
 			},
 			CacheConfig: cacheCfg,
@@ -100,7 +100,7 @@ func TestMysql(t *testing.T) {
 			panic(err)
 		}
 
-		err = node1.Start("", func(node *election.Node) error {
+		err = node1.Start(func(node *election.Node) error {
 			fmt.Println("执行主节点对象：", conv.String(node))
 			_ = node1.Stop()
 			return nil
@@ -114,10 +114,10 @@ func TestMysql(t *testing.T) {
 	}()
 	go func() {
 		ctx := context.Background()
-		node1, err := election.NewMysqlElection(ctx, &election.MysqlConfig{
-			ElectionInterval: 5,
+		node1, err := election.NewMysqlElection(ctx, &election.MysqlElectionConfig{
+			ElectionInterval: 0,
 			HeartbeatTimeout: 0,
-			Node: &election.Node{
+			CurrentNode: &election.Node{
 				Id: "node3",
 			},
 			CacheConfig: cacheCfg,
@@ -127,7 +127,7 @@ func TestMysql(t *testing.T) {
 			panic(err)
 		}
 
-		err = node1.Start("", func(node *election.Node) error {
+		err = node1.Start(func(node *election.Node) error {
 			fmt.Println("执行主节点对象：", conv.String(node))
 			_ = node1.Stop()
 			return nil

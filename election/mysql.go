@@ -10,6 +10,7 @@ import (
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/samber/lo"
 	"log"
+	"math/rand"
 	"sort"
 	"sync"
 	"time"
@@ -20,37 +21,41 @@ const (
 	stopDefault   = "_stop"
 )
 
+func init() { rand.Seed(time.Now().UnixNano()) }
+
 var (
 	electionMap = cmap.New[[]*Node]()
 )
 
-// MysqlConfig 节点管理器配置器
-type MysqlConfig struct {
-	CacheConfig      cache.MySQLCacheConfig
-	LockerConfig     *mysqllock.Config
-	Locker           func(ns, key string) lock.Locker
-	Node             *Node
-	ElectionKey      string // 选举List的所有Key
-	HeartbeatTimeout int    // 心跳超时时间，超时，表示这个节点不能用了(秒)
-	ElectionInterval int    // 选举检查间隔(秒)
-	DefaultLeader    *Node  // 设置默认主节点，如果存在就默认为主节点
+// MysqlElectionConfig 用于配置基于 MySQL 的选举相关参数
+type MysqlElectionConfig struct {
+	// 原有字段保持不变
+	CacheConfig      cache.MySQLCacheConfig           `json:"cache_config" yaml:"cache_config"`           //选举结果存储位置
+	LockerConfig     *mysqllock.Config                `json:"locker_config" yaml:"locker_config"`         //全局锁配置，默认使用mysql锁
+	Locker           func(ns, key string) lock.Locker `json:"-" yaml:"-"`                                 //获取当前具体的锁，可能会与key相关，非全局，提高执行效率
+	CurrentNode      *Node                            `json:"current_node" yaml:"current_node"`           //当前节点信息
+	ElectionKey      string                           `json:"election_key" yaml:"election_key"`           // 选举所有List的Key，用于在CacheConfig存储的key
+	HeartbeatTimeout time.Duration                    `json:"heartbeat_timeout" yaml:"heartbeat_timeout"` // 心跳超时时间，超时，表示这个节点断开了(秒)
+	ElectionInterval time.Duration                    `json:"election_interval" yaml:"election_interval"` // 参与选举的周期，间隔多久重新选举，避免Leader节点挂掉的情况
+	DefaultLeader    *Node                            `json:"default_leader" yaml:"default_leader"`       // 设置默认主节点，如果存在就默认为主节点
+
+	// 新增首次选举控制参数
+	FirstElectionTotalNodes int           `json:"first_election_total_nodes" yaml:"first_election_total_nodes"` // 预期参与首次选举的总节点数，0表示不限制
+	FirstElectionMaxWait    time.Duration `json:"first_election_max_wait" yaml:"first_election_max_wait"`       // 首次选举的最大等待时间，超时后无论节点是否到齐都开始选举
 }
 
 // MysqlElection 选举管理器
 type MysqlElection struct {
-	mysqlCache    cache.CommCache[[]*Node]
-	lockFunc      func(ns, key string) lock.Locker
-	node          *Node
-	defaultLeader *Node
-	mysqlConfig   *MysqlConfig
-	mu            sync.Mutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	running       bool
+	mysqlCache     cache.CommCache[[]*Node]
+	electionConfig MysqlElectionConfig
+	mu             sync.Mutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	running        bool
 }
 
 // NewMysqlElection 创建选举实例
-func NewMysqlElection(ctx context.Context, cfg *MysqlConfig) (*MysqlElection, error) {
+func NewMysqlElection(ctx context.Context, cfg *MysqlElectionConfig) (*MysqlElection, error) {
 	if cfg.ElectionKey == "" {
 		return nil, fmt.Errorf("选举Key不能为空，用来存储所有节点的列表")
 	}
@@ -61,7 +66,7 @@ func NewMysqlElection(ctx context.Context, cfg *MysqlConfig) (*MysqlElection, er
 		cancel()
 		return nil, fmt.Errorf("创建Mysql数据失败: %s", err.Error())
 	}
-	node := NewNode(cfg.Node)
+	cfg.CurrentNode = NewNode(cfg.CurrentNode)
 
 	if cfg.LockerConfig == nil {
 		cfg.LockerConfig = &mysqllock.Config{
@@ -70,11 +75,14 @@ func NewMysqlElection(ctx context.Context, cfg *MysqlConfig) (*MysqlElection, er
 			Namespace: cfg.CacheConfig.Namespace + lockerDefault,
 		}
 	}
-	if cfg.ElectionInterval == 0 {
-		cfg.ElectionInterval = 150
-	}
+
 	if cfg.HeartbeatTimeout == 0 {
-		cfg.HeartbeatTimeout = 300
+		cfg.HeartbeatTimeout = 300 * time.Second
+	}
+	if cfg.FirstElectionMaxWait == 0 {
+		if cfg.FirstElectionTotalNodes <= 0 {
+			cfg.FirstElectionMaxWait = 3 * time.Minute
+		}
 	}
 
 	if cfg.LockerConfig.DSN == "" {
@@ -94,39 +102,38 @@ func NewMysqlElection(ctx context.Context, cfg *MysqlConfig) (*MysqlElection, er
 	}
 
 	return &MysqlElection{
-		mysqlConfig:   cfg,
-		mysqlCache:    mysqlCache,
-		lockFunc:      cfg.Locker,
-		node:          node,
-		defaultLeader: cfg.DefaultLeader,
-		ctx:           childCtx,
-		cancel:        cancel,
-		running:       true,
+		electionConfig: *cfg,
+		mysqlCache:     mysqlCache,
+		ctx:            childCtx,
+		cancel:         cancel,
+		running:        true,
 	}, nil
 }
 
 // Start 启动节点：注册节点信息、参与选举、定时心跳
 func (nm *MysqlElection) Start(f func(node *Node) error) error {
 	// 1. 注册节点信息
-	if err := nm.Register(); err != nil {
+	if err := nm.register(); err != nil {
 		return err
 	}
 
-	// 2. 定时发送心跳，更新最后活动时间
+	// 2. 定时发送心跳，更新最后活动时间,10s一次
 	go nm.heartbeat()
 
-	// 3. 参与主节点选举（如果是初始主节点则优先竞选）
+	// 3. 参与主节点选举
 	go func() {
+		//等待第一次选举
+		nm.waitForFirstElection()
 		nm.startElection(f)
 	}()
 
-	log.Printf("节点 %s 启动成功 (IP: %s)", nm.node.Id, nm.node.IP)
+	log.Printf("节点 %s 启动成功 (IP: %s)", nm.electionConfig.CurrentNode.Id, nm.electionConfig.CurrentNode.IP)
 	return nil
 }
 
 // Register 注册节点信息
-func (nm *MysqlElection) Register() error {
-	nm.node.LastHeartbeat = time.Now()
+func (nm *MysqlElection) register() error {
+	nm.electionConfig.CurrentNode.LastHeartbeat = time.Now()
 	return nm.setToList(nil)
 }
 func (nm *MysqlElection) delete(toNode *Node) error {
@@ -143,7 +150,7 @@ func (nm *MysqlElection) delete(toNode *Node) error {
 }
 
 func (nm *MysqlElection) getElectionMapKey() string {
-	return fmt.Sprintf("%s/%s", nm.mysqlConfig.CacheConfig.Namespace, nm.mysqlConfig.ElectionKey)
+	return fmt.Sprintf("%s/%s", nm.electionConfig.CacheConfig.Namespace, nm.electionConfig.ElectionKey)
 }
 func (nm *MysqlElection) getAllNodeFromCache() ([]*Node, error) {
 	ctx := context.Background()
@@ -154,7 +161,7 @@ func (nm *MysqlElection) getAllNodeFromCache() ([]*Node, error) {
 	if electionMap.Has(mapKey) {
 		nodeList, _ = electionMap.Get(mapKey)
 	} else {
-		nodeList, err = cache.NsGet[[]*Node](ctx, nm.mysqlCache, nm.mysqlConfig.CacheConfig.Namespace, nm.mysqlConfig.ElectionKey)
+		nodeList, err = cache.NsGet[[]*Node](ctx, nm.mysqlCache, nm.electionConfig.CacheConfig.Namespace, nm.electionConfig.ElectionKey)
 		if err != nil {
 			return nil, fmt.Errorf("获取节点列表失败: %v", err)
 		}
@@ -163,8 +170,6 @@ func (nm *MysqlElection) getAllNodeFromCache() ([]*Node, error) {
 }
 
 func (nm *MysqlElection) setListToCache(execList ...func(nodeList []*Node) []*Node) error {
-	log.Println("执行保存到mysql缓存:", nm.node.Id)
-
 	nodeList, err := nm.getAllNodeFromCache()
 	if err != nil {
 		return fmt.Errorf("获取节点列表失败: %v", err)
@@ -172,6 +177,8 @@ func (nm *MysqlElection) setListToCache(execList ...func(nodeList []*Node) []*No
 	if nodeList == nil {
 		nodeList = make([]*Node, 0)
 	}
+
+	log.Println("执行保存到mysql缓存:", nm.electionConfig.CurrentNode.Id, conv.String(nodeList))
 
 	if len(execList) > 0 {
 		lo.ForEach(execList, func(execFun func(nodeList []*Node) []*Node, index int) {
@@ -198,7 +205,7 @@ func (nm *MysqlElection) setListToCache(execList ...func(nodeList []*Node) []*No
 
 	mapKey := nm.getElectionMapKey()
 	electionMap.Set(mapKey, nodeList)
-	_, err = cache.NsSet[[]*Node](context.Background(), nm.mysqlCache, nm.mysqlConfig.CacheConfig.Namespace, nm.mysqlConfig.ElectionKey, nodeList, 24*7*time.Hour)
+	_, err = cache.NsSet[[]*Node](context.Background(), nm.mysqlCache, nm.electionConfig.CacheConfig.Namespace, nm.electionConfig.ElectionKey, nodeList, 24*7*time.Hour)
 	if err != nil {
 		return fmt.Errorf("设置节点列表失败: %v", err)
 	}
@@ -208,18 +215,18 @@ func (nm *MysqlElection) setListToCache(execList ...func(nodeList []*Node) []*No
 func (nm *MysqlElection) setToList(execList func(nodeList []*Node) []*Node) error {
 	var retErr error
 	ctx := context.Background()
-	err := nm.lockFunc(nm.mysqlConfig.CacheConfig.Namespace, nm.mysqlConfig.ElectionKey).LockFunc(ctx, func() {
+	err := nm.electionConfig.Locker(nm.electionConfig.CacheConfig.Namespace, nm.electionConfig.ElectionKey).LockFunc(ctx, func() {
 		retErr = nm.setListToCache(func(nodeList []*Node) []*Node {
 			_, index, found := lo.FindIndexOf(nodeList, func(node *Node) bool {
-				return node.Compare(nm.node)
+				return node.Compare(nm.electionConfig.CurrentNode)
 			})
 			if !found {
 				isStop, err := nm.isGlobalStop()
 				if !(err == nil && isStop) {
-					nodeList = append(nodeList, nm.node)
+					nodeList = append(nodeList, nm.electionConfig.CurrentNode)
 				}
 			} else {
-				nodeList[index].LastHeartbeat = nm.node.LastHeartbeat
+				nodeList[index].LastHeartbeat = nm.electionConfig.CurrentNode.LastHeartbeat
 			}
 			return nodeList
 		}, execList)
@@ -243,35 +250,134 @@ func (nm *MysqlElection) heartbeat() {
 		case <-nm.ctx.Done():
 			return
 		case <-ticker.C:
-			err := nm.Register()
+			err := nm.register()
 			if err != nil {
-				log.Printf("节点自动注册失败: %s (node: %s)", err.Error(), nm.node.Id)
+				log.Printf("节点自动注册失败: %s (node: %s)", err.Error(), nm.electionConfig.CurrentNode.Id)
 			}
 		}
 	}
 }
 
+// waitForFirstElection 等待第一次选举
+func (nm *MysqlElection) waitForFirstElection() {
+	//增加一个随机秒数，减少节点同时启动选举的几率
+	randomDelay := time.Duration(rand.Intn(7)) * time.Second
+	time.Sleep(randomDelay)
+
+	// 直接等待指定超时时间后开始选举
+	if nm.electionConfig.FirstElectionTotalNodes <= 0 {
+		log.Printf(
+			"首次选举：不限制节点数，等待 %v 后开始 (当前节点: %s)",
+			nm.electionConfig.FirstElectionMaxWait,
+			nm.electionConfig.CurrentNode.Id,
+		)
+		time.Sleep(nm.electionConfig.FirstElectionMaxWait)
+		log.Printf("首次选举：等待超时，开始选举 (当前节点: %s)", nm.electionConfig.CurrentNode.Id)
+		return
+	}
+
+	startTime := time.Now()
+	targetNodes := nm.electionConfig.FirstElectionTotalNodes
+	maxWait := nm.electionConfig.FirstElectionMaxWait
+	lastErrorTime := time.Time{} // 记录上次错误发生时间，避免频繁打印错误日志
+
+	log.Printf(
+		"首次选举：等待 %d 个节点，最长等待 %v (当前节点: %s)",
+		targetNodes, maxWait, nm.electionConfig.CurrentNode.Id,
+	)
+
+	for {
+		// 检查是否超时（优先判断超时，避免错误时无限等待）
+		if maxWait > 0 {
+			elapsed := time.Since(startTime)
+			if elapsed >= maxWait {
+				log.Printf(
+					"首次选举：等待超时 (%v/%v)，开始选举 (当前节点: %s)",
+					elapsed, maxWait, nm.electionConfig.CurrentNode.Id,
+				)
+				return
+			}
+		}
+
+		// 获取当前已注册的节点数量
+		currList, err := nm.getAllNodeFromCache()
+		if err != nil {
+			// 控制错误日志打印频率，避免刷屏（10秒内只打印一次）
+			if time.Since(lastErrorTime) > 10*time.Second {
+				log.Printf(
+					"首次选举：获取节点列表失败: %v (当前节点: %s，已等待: %v)",
+					err, nm.electionConfig.CurrentNode.Id, time.Since(startTime),
+				)
+				lastErrorTime = time.Now()
+			}
+			time.Sleep(3 * time.Second)
+			continue // 继续等待，直到超时
+		}
+
+		// 检查是否满足节点数量条件
+		if len(currList) >= targetNodes {
+			log.Printf(
+				"首次选举：节点数量达标 (%d/%d)，开始选举 (当前节点: %s，已等待: %v)",
+				len(currList), targetNodes, nm.electionConfig.CurrentNode.Id, time.Since(startTime),
+			)
+			return
+		}
+
+		// 未满足条件，3秒后再次检查
+		time.Sleep(3 * time.Second)
+	}
+}
+
 // StartElection 开始选举过程
 func (nm *MysqlElection) startElection(fun func(node *Node) error) {
-	ticker := time.NewTicker(time.Duration(nm.mysqlConfig.ElectionInterval) * time.Second)
+	currentNodeID := nm.electionConfig.CurrentNode.Id // 提取当前节点ID，简化日志
+	interval := nm.electionConfig.ElectionInterval
+
+	defer func() {
+		//清理资源
+		if err := nm.Stop(); err != nil {
+			log.Printf("选举停止失败 (节点: %s): %v", currentNodeID, err)
+		} else {
+			log.Printf("选举完成并停止 (节点: %s)", currentNodeID)
+		}
+	}()
+
+	// 一次性选举模式
+	if interval == 0 {
+		log.Printf("启动一次性选举 (节点: %s)", currentNodeID)
+		if err := nm.electOnce(fun); err != nil {
+			log.Printf("一次性选举失败 (节点: %s): %v", currentNodeID, err)
+		}
+		return
+	}
+
+	// 周期性选举模式
+	ticker := time.NewTicker(interval) // 明确单位为秒
 	defer ticker.Stop()
+
+	log.Printf("启动周期性选举，间隔 %ds (节点: %s)", interval, currentNodeID)
 
 	for {
 		select {
 		case <-nm.ctx.Done():
-			log.Printf("startElection ctx.Done: %s", conv.String(nm.node))
-			_ = nm.Stop()
+			log.Printf("startElection ctx.Done: %s", conv.String(nm.electionConfig.CurrentNode))
 			return
 		case <-ticker.C:
+			// 检查是否全局停止
 			isStop, err := nm.isGlobalStop()
-			if isStop && err == nil {
-				log.Printf("startElection ticker.C: %s, %s", conv.String(nm.node), conv.String(isStop))
-				_ = nm.Stop()
-			} else {
-				err = nm.electOnce(fun)
-				if err != nil {
-					log.Printf("节点选举失败: %s (node: %s)", err.Error(), conv.String(nm.node))
-				}
+			if err != nil {
+				log.Printf("检查全局停止状态失败 (节点: %s): %v", currentNodeID, err)
+				continue // 错误时继续下一次选举
+			}
+
+			if isStop {
+				log.Printf("检测到全局停止信号，终止选举 (节点: %s)", currentNodeID)
+				return
+			}
+
+			// 执行单次选举
+			if err := nm.electOnce(fun); err != nil {
+				log.Printf("周期性选举失败 (节点: %s): %v", currentNodeID, err)
 			}
 		}
 	}
@@ -280,7 +386,7 @@ func (nm *MysqlElection) removeExpireNode(nodeList []*Node) []*Node {
 	newNodeList := make([]*Node, 0)
 	// 去掉超时的节点
 	lo.ForEach(nodeList, func(node *Node, index int) {
-		if node.LastHeartbeat.Add(time.Duration(nm.mysqlConfig.HeartbeatTimeout) * time.Second).Before(time.Now()) {
+		if node.LastHeartbeat.Add(nm.electionConfig.HeartbeatTimeout).Before(time.Now()) {
 			return
 		}
 		newNodeList = append(newNodeList, node)
@@ -291,9 +397,9 @@ func (nm *MysqlElection) findLeader(nodeList []*Node) (*Node, int) {
 	if len(nodeList) == 0 {
 		return nil, 0
 	}
-	if nm.defaultLeader != nil {
+	if nm.electionConfig.DefaultLeader != nil {
 		oneNode, index, ok := lo.FindIndexOf(nodeList, func(node *Node) bool {
-			return nm.defaultLeader.CheckIsLeader(node)
+			return nm.electionConfig.DefaultLeader.CheckIsLeader(node)
 		})
 		if ok {
 			return oneNode, index
@@ -329,7 +435,7 @@ func (nm *MysqlElection) electOnce(fun func(node *Node) error) error {
 				node.IsLeader = false //其他的都变为非主节点
 			})
 			nodeList[index].IsLeader = true
-			if nm.node.Compare(leaderNode) && nm.running {
+			if nm.electionConfig.CurrentNode.Compare(leaderNode) && nm.running {
 				err := fun(leaderNode)
 				if err != nil {
 					log.Println("主节点任务执行失败:", err)
@@ -344,7 +450,7 @@ func (nm *MysqlElection) electOnce(fun func(node *Node) error) error {
 func (nm *MysqlElection) setGlobalStop() error {
 	nm.running = false
 	ctx := context.Background()
-	_, err := cache.NsSet[[]*Node](ctx, nm.mysqlCache, nm.mysqlConfig.CacheConfig.Namespace, nm.mysqlConfig.ElectionKey+stopDefault, nil, 24*time.Hour)
+	_, err := cache.NsSet[[]*Node](ctx, nm.mysqlCache, nm.electionConfig.CacheConfig.Namespace, nm.electionConfig.ElectionKey+stopDefault, nil, 24*time.Hour)
 	if err != nil {
 		return fmt.Errorf("设置节点停止失败: %v", err)
 	}
@@ -355,13 +461,15 @@ func (nm *MysqlElection) clearGlobalStop() error {
 	if err != nil {
 		return fmt.Errorf("获取节点列表失败clearGlobalStop: %v", err)
 	}
+	nodeList = nm.removeExpireNode(nodeList)
 	if len(nodeList) == 0 {
 		ctx := context.Background()
-		_, err = cache.NsDel[[]*Node](ctx, nm.mysqlCache, nm.mysqlConfig.CacheConfig.Namespace, nm.mysqlConfig.ElectionKey+stopDefault)
+		_, err = cache.NsDel[[]*Node](ctx, nm.mysqlCache, nm.electionConfig.CacheConfig.Namespace, nm.electionConfig.ElectionKey+stopDefault)
 		if err != nil {
 			return fmt.Errorf("设置节点停止失败clearGlobalStop: %v", err)
 		}
-		_, _ = cache.NsDel[[]*Node](ctx, nm.mysqlCache, nm.mysqlConfig.CacheConfig.Namespace, nm.mysqlConfig.ElectionKey)
+		_, _ = cache.NsDel[[]*Node](ctx, nm.mysqlCache, nm.electionConfig.CacheConfig.Namespace, nm.electionConfig.ElectionKey)
+		return nil
 	}
 	return nil
 }
@@ -372,7 +480,7 @@ func (nm *MysqlElection) isGlobalStop() (bool, error) {
 	}
 
 	ctx := context.Background()
-	data, err := cache.NsGet[[]*Node](ctx, nm.mysqlCache, nm.mysqlConfig.CacheConfig.Namespace, nm.mysqlConfig.ElectionKey+stopDefault)
+	data, err := cache.NsGet[[]*Node](ctx, nm.mysqlCache, nm.electionConfig.CacheConfig.Namespace, nm.electionConfig.ElectionKey+stopDefault)
 	if err != nil {
 		return false, err
 	}
@@ -393,9 +501,9 @@ func (nm *MysqlElection) Stop() error {
 	defer nm.mu.Unlock()
 	nm.cancel()
 
-	nodeId := nm.node.Id
+	nodeId := nm.electionConfig.CurrentNode.Id
 
-	err = nm.delete(nm.node)
+	err = nm.delete(nm.electionConfig.CurrentNode)
 	if err != nil {
 		return err
 	}
