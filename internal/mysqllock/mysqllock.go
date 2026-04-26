@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/magic-lib/go-plat-cache/cache"
 	"github.com/magic-lib/go-plat-locker/internal/config"
 	"log"
 	"sync"
@@ -64,11 +65,17 @@ func NewMySqlLock(cfg *Config, key string, expiration time.Duration) (*MySqlLock
 	}
 	if cfg.SqlDB == nil {
 		if cfg.DSN != "" {
-			sqlDB, err := sql.Open("mysql", cfg.DSN)
+			mysqlPool, err := cache.CreateMySqlPool(&cache.MySqlPoolConfig{
+				DSN: cfg.DSN,
+			})
 			if err != nil {
-				return nil, fmt.Errorf("初始化数据库连接失败: %v", err)
+				return nil, fmt.Errorf("初始化数据库连接池失败: %v", err)
 			}
-			cfg.SqlDB = sqlDB
+			mysqlRes, err := mysqlPool.Get()
+			if err != nil {
+				return nil, fmt.Errorf("获取数据库连接失败: %v", err)
+			}
+			cfg.SqlDB = mysqlRes.Get()
 		}
 	}
 	if cfg.SqlDB == nil {
