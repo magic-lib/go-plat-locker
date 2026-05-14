@@ -57,6 +57,8 @@ func NewKeyPeriodLimiter(cacheTime time.Duration, maxRequests int, period time.D
 func (kl *KeySecondLimiter) getLimiter(ctx context.Context, key string) *rate.Limiter {
 	limiter, err := kl.limitCache.Get(ctx, key)
 	if err == nil && limiter != nil {
+		//进行续期，避免清理掉，造成限频失败
+		_, _ = kl.limitCache.Set(ctx, key, limiter, kl.cacheTime)
 		return limiter
 	}
 	limiter = rate.NewLimiter(kl.rate, kl.burst)
