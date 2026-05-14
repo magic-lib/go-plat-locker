@@ -8,12 +8,13 @@ require (
 	github.com/go-redsync/redsync/v4 v4.13.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/magic-lib/go-plat-cache v1.20260210.2-0.20260426195715-12a8640acbdd
-	github.com/magic-lib/go-plat-utils v1.20260210.2-0.20260417095401-8b5dc296f5a8
+	github.com/magic-lib/go-plat-utils v1.20260210.2-0.20260514070309-fbfadb7e4231
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/samber/lo v1.52.0
 	go.etcd.io/etcd/client/v3 v3.6.4
+	golang.org/x/time v0.12.0
 )
 
 require (
@@ -40,6 +41,7 @@ require (
 	github.com/dgraph-io/ristretto/v2 v2.1.0 // indirect
 	github.com/dgryski/go-metro v0.0.0-20200812162917-85c65e2d0165 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/docker/go v1.5.1-1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/forgoer/openssl v1.6.0 // indirect
@@ -100,11 +102,12 @@ require (
 	github.com/soniah/evaler v2.2.0+incompatible // indirect
 	github.com/sony/sonyflake v1.2.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
+	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
-	github.com/tidwall/pretty v1.2.0 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/timandy/routine v1.1.5 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
