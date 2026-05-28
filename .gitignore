@@ -29,5 +29,6 @@ go.work
 .project
 .DS_Store
 .vscode
+.codebuddy/
 .fleet
 curl/.DS_Store
