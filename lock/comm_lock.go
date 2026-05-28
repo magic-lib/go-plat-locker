@@ -2,13 +2,12 @@ package lock
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"github.com/go-redis/redis/v8"
+	"github.com/magic-lib/go-plat-cache/cache"
 	"github.com/magic-lib/go-plat-locker/internal/gmlock"
 	"github.com/magic-lib/go-plat-locker/internal/mysqllock"
 	"github.com/magic-lib/go-plat-locker/internal/redislock"
-	"github.com/magic-lib/go-plat-utils/conv"
 	"sync"
 	"time"
 )
@@ -24,13 +23,6 @@ var (
 	_                  Locker = (*mysqllock.MySqlLock)(nil)
 	_                  Locker = (*commLocker)(nil)
 )
-
-type MysqlConfig struct {
-	DSN       string `json:"dsn"`
-	SqlDB     *sql.DB
-	TableName string `json:"table_name"`
-	Namespace string `json:"namespace"`
-}
 
 // SetLockerDefRedisClient 新建redis锁
 func SetLockerDefRedisClient(redisClient *redis.Client) {
@@ -50,7 +42,7 @@ func SetLockerDefRedisClient(redisClient *redis.Client) {
 
 type commLocker struct {
 	redisClient *redis.Client
-	mysqlClient *MysqlConfig
+	mysqlClient *cache.MySQLCacheConfig
 	locker      Locker
 	expiration  time.Duration
 }
@@ -116,7 +108,7 @@ func WithRedisClient(redisClient *redis.Client) Option {
 		c.redisClient = redisClient
 	}
 }
-func WithMysqlClient(mysqlConfig *MysqlConfig) Option {
+func WithMysqlClient(mysqlConfig *cache.MySQLCacheConfig) Option {
 	return func(c *commLocker) {
 		c.mysqlClient = mysqlConfig
 	}
@@ -145,11 +137,8 @@ func NewLocker(key string, options ...Option) Locker {
 			SetLockerDefRedisClient(locker.redisClient)
 		}
 	} else if locker.mysqlClient != nil {
-		lockerMysqlCfg := new(mysqllock.Config)
-		_ = conv.Unmarshal(locker.mysqlClient, lockerMysqlCfg)
-
 		var err error
-		locker.locker, err = mysqllock.NewMySqlLock(lockerMysqlCfg, key, locker.expiration)
+		locker.locker, err = mysqllock.NewMySqlLock(locker.mysqlClient, key, locker.expiration)
 		if err == nil {
 			return locker
 		}

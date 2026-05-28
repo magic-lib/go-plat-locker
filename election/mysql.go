@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/magic-lib/go-plat-cache/cache"
-	"github.com/magic-lib/go-plat-locker/internal/mysqllock"
 	"github.com/magic-lib/go-plat-locker/lock"
 	"github.com/magic-lib/go-plat-utils/conv"
 	cmap "github.com/orcaman/concurrent-map/v2"
@@ -31,7 +30,7 @@ var (
 type MysqlElectionConfig struct {
 	// 原有字段保持不变
 	CacheConfig      cache.MySQLCacheConfig           `json:"cache_config" yaml:"cache_config"`           //选举结果存储位置
-	LockerConfig     *mysqllock.Config                `json:"locker_config" yaml:"locker_config"`         //全局锁配置，默认使用mysql锁
+	LockerConfig     *cache.MySQLCacheConfig          `json:"locker_config" yaml:"locker_config"`         //全局锁配置，默认使用mysql锁
 	Locker           func(ns, key string) lock.Locker `json:"-" yaml:"-"`                                 //获取当前具体的锁，可能会与key相关，非全局，提高执行效率
 	CurrentNode      *Node                            `json:"current_node" yaml:"current_node"`           //当前节点信息
 	ElectionKey      string                           `json:"election_key" yaml:"election_key"`           // 选举所有List的Key，用于在CacheConfig存储的key
@@ -69,7 +68,7 @@ func NewMysqlElection(ctx context.Context, cfg *MysqlElectionConfig) (*MysqlElec
 	cfg.CurrentNode = NewNode(cfg.CurrentNode)
 
 	if cfg.LockerConfig == nil {
-		cfg.LockerConfig = &mysqllock.Config{
+		cfg.LockerConfig = &cache.MySQLCacheConfig{
 			DSN:       cfg.CacheConfig.DSN,
 			TableName: cfg.CacheConfig.TableName + lockerDefault,
 			Namespace: cfg.CacheConfig.Namespace + lockerDefault,

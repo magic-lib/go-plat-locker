@@ -34,13 +34,6 @@ type DBLock interface {
 	Renew(ctx context.Context) error           // 续期锁
 }
 
-type Config struct {
-	DSN       string `json:"dsn"`
-	SqlDB     *sql.DB
-	TableName string `json:"table_name"`
-	Namespace string `json:"namespace"`
-}
-
 // MySqlLock MySQL 分布式锁实现
 type MySqlLock struct {
 	sqlDB      *sql.DB       // 数据库连接
@@ -55,7 +48,7 @@ type MySqlLock struct {
 }
 
 // NewMySqlLock 创建一个新的 MySQL 锁
-func NewMySqlLock(cfg *Config, key string, expiration time.Duration) (*MySqlLock, error) {
+func NewMySqlLock(cfg *cache.MySQLCacheConfig, key string, expiration time.Duration) (*MySqlLock, error) {
 	if cfg.Namespace == "" {
 		return nil, fmt.Errorf("namespace is empty")
 	}
